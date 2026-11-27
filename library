@@ -1,0 +1,226 @@
+#include <algorithm>
+#include <cctype>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <limits>
+#include <string>
+#include <utility>
+#include <vector>
+
+class Book {
+public:
+    Book(int id, std::string title, std::string author, bool issued = false)
+        : id_(id), title_(std::move(title)), author_(std::move(author)), issued_(issued) {}
+
+    int id() const { return id_; }
+    const std::string& title() const { return title_; }
+    const std::string& author() const { return author_; }
+    bool isIssued() const { return issued_; }
+    void issue() { issued_ = true; }
+    void giveBack() { issued_ = false; }
+
+private:
+    int id_;
+    std::string title_;
+    std::string author_;
+    bool issued_;
+};
+
+class Library {
+public:
+    explicit Library(const std::string& fileName) : fileName_(fileName) {}
+
+    bool load() {
+        std::ifstream file(fileName_);
+        if (!file) return true; // A missing file means this is a new library.
+
+        books_.clear();
+        int id;
+        bool issued;
+        std::string title;
+        std::string author;
+        while (file >> id >> std::quoted(title) >> std::quoted(author) >> issued) {
+            if (id > 0 && !title.empty() && !author.empty()) {
+                books_.emplace_back(id, title, author, issued);
+                nextId_ = std::max(nextId_, id + 1);
+            }
+        }
+        if (!file.eof()) {
+            std::cerr << "Warning: the data file has an unreadable line; valid earlier entries were loaded.\n";
+        }
+        return true;
+    }
+
+    bool save() const {
+        std::ofstream file(fileName_, std::ios::trunc);
+        if (!file) {
+            std::cerr << "Could not save to " << fileName_ << ". Check that the folder is writable.\n";
+            return false;
+        }
+        for (const Book& book : books_) {
+            file << book.id() << ' ' << std::quoted(book.title()) << ' '
+                 << std::quoted(book.author()) << ' ' << book.isIssued() << '\n';
+        }
+        if (!file) {
+            std::cerr << "A problem occurred while writing " << fileName_ << ".\n";
+            return false;
+        }
+        return true;
+    }
+
+    void addBook(const std::string& title, const std::string& author) {
+        books_.emplace_back(nextId_++, title, author);
+        std::cout << "Book added with ID " << books_.back().id() << ".\n";
+        save();
+    }
+
+    void listBooks() const {
+        if (books_.empty()) {
+            std::cout << "The library has no books yet.\n";
+            return;
+        }
+        printHeader();
+        for (const Book& book : books_) printBook(book);
+    }
+
+    void searchBooks(const std::string& query) const {
+        const std::string needle = lower(query);
+        bool found = false;
+        for (const Book& book : books_) {
+            if (lower(book.title()).find(needle) != std::string::npos ||
+                lower(book.author()).find(needle) != std::string::npos) {
+                if (!found) printHeader();
+                printBook(book);
+                found = true;
+            }
+        }
+        if (!found) std::cout << "No matching books found.\n";
+    }
+
+    void setIssued(int id, bool issued) {
+        for (Book& book : books_) {
+            if (book.id() == id) {
+                if (book.isIssued() == issued) {
+                    std::cout << (issued ? "That book is already issued.\n" : "That book is already available.\n");
+                    return;
+                }
+                if (issued) book.issue();
+                else book.giveBack();
+                std::cout << (issued ? "Book issued.\n" : "Book returned.\n");
+                save();
+                return;
+            }
+        }
+        std::cout << "No book has ID " << id << ".\n";
+    }
+
+private:
+    static std::string lower(std::string value) {
+        std::transform(value.begin(), value.end(), value.begin(),
+            [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+        return value;
+    }
+
+    static void printHeader() {
+        std::cout << "\nID | Title | Author | Status\n"
+                  << "---|-------|--------|-------\n";
+    }
+
+    static void printBook(const Book& book) {
+        std::cout << book.id() << " | " << book.title() << " | " << book.author()
+                  << " | " << (book.isIssued() ? "Issued" : "Available") << '\n';
+    }
+
+    std::string fileName_;
+    std::vector<Book> books_;
+    int nextId_ = 1;
+};
+
+bool readMenuChoice(int& choice) {
+    std::string line;
+    if (!std::getline(std::cin, line)) return false;
+    try {
+        std::size_t used = 0;
+        choice = std::stoi(line, &used);
+        return used == line.size();
+    } catch (...) {
+        return false;
+    }
+}
+
+bool readBookId(int& id) {
+    std::cout << "Enter book ID: ";
+    std::string line;
+    if (!std::getline(std::cin, line)) return false;
+    try {
+        std::size_t used = 0;
+        id = std::stoi(line, &used);
+        return used == line.size() && id > 0;
+    } catch (...) {
+        return false;
+    }
+}
+
+int main() {
+    Library library("library_data.txt");
+    library.load();
+
+    std::cout << "Library Manager\nBooks are saved in library_data.txt in this folder.\n";
+    bool running = true;
+    while (running) {
+        std::cout << "\n1. Add book\n2. List books\n3. Search books\n"
+                  << "4. Issue book\n5. Return book\n6. Save and quit\nChoose an option: ";
+
+        int choice;
+        if (!readMenuChoice(choice)) {
+            if (std::cin.eof()) break;
+            std::cout << "Please enter a menu number from 1 to 6.\n";
+            continue;
+        }
+
+        std::string title;
+        std::string author;
+        std::string query;
+        int id;
+        switch (choice) {
+        case 1:
+            std::cout << "Title: ";
+            if (!std::getline(std::cin, title)) { running = false; break; }
+            std::cout << "Author: ";
+            if (!std::getline(std::cin, author)) { running = false; break; }
+            if (title.empty() || author.empty()) {
+                std::cout << "Title and author cannot be empty.\n";
+            } else {
+                library.addBook(title, author);
+            }
+            break;
+        case 2:
+            library.listBooks();
+            break;
+        case 3:
+            std::cout << "Search title or author: ";
+            if (!std::getline(std::cin, query)) { running = false; break; }
+            library.searchBooks(query);
+            break;
+        case 4:
+            if (readBookId(id)) library.setIssued(id, true);
+            else if (!std::cin.eof()) std::cout << "Please enter a valid positive book ID.\n";
+            else running = false;
+            break;
+        case 5:
+            if (readBookId(id)) library.setIssued(id, false);
+            else if (!std::cin.eof()) std::cout << "Please enter a valid positive book ID.\n";
+            else running = false;
+            break;
+        case 6:
+            library.save();
+            running = false;
+            break;
+        default:
+            std::cout << "Please choose a menu number from 1 to 6.\n";
+        }
+    }
+
+    return 0;
+}
